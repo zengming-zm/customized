@@ -54,7 +54,7 @@ from gensim.models.word2vec import Vocab
 np.random.seed(1)
 random.seed(1)
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 def sparse2graph(x):
     G = defaultdict(lambda: set())
@@ -70,9 +70,9 @@ A = mat['network']
 g = sparse2graph(A)
 labels_matrix = mat['group']
 labels_count = labels_matrix.shape[1]
+adj_matrix = A.todense()
+input_dim = adj_matrix.shape[0]
 
-
-# In[365]:
 
 # file_list = ['/hdd2/graph_embedding/customized/tmp/citeseer.embeddings.walks']
 file_list = ['/hdd2/graph_embedding/customized/blogcatalog.embeddings.walks.0']
@@ -114,13 +114,6 @@ def build_dataset(words):
 
 data, count, dictionary, reverse_dictionary = build_dataset(words)
 
-
-# In[372]:
-
-
-
-
-# In[374]:
 
 ## Read the data, the trn_x is the position in the embedding matrix
 data_splited_filename = '/hdd2/graph_embedding/customized/blogcatalog_splited_p10.pickle'
@@ -187,8 +180,8 @@ features_list = []
 for idx in range(vocabulary_size):
     str_node = reverse_dictionary[idx]
     features_list.append(seeded_vector(str_node + str(1), 128))
-#features_matrix = np.asarray(features_list)
-features_matrix = read_train_matrix('/hdd2/graph_embedding/customized/results/deepwalk_unsupervised/blog_embeddings_iter710000.txt')
+features_matrix = np.asarray(features_list)
+#features_matrix = read_train_matrix('/hdd2/graph_embedding/customized/results/deepwalk_unsupervised/blog_embeddings_iter710000.txt')
 
 
 # In[313]:
@@ -245,6 +238,11 @@ with graph.as_default(), tf.device('/gpu:0'):
     path_dataset= tf.placeholder(tf.int32, shape = [batch_path_size, len(dataset[0])])
     path_id = tf.placeholder(tf.int32, shape = [None, ])
 
+    #l_x_2 = tf.layers.dense(inputs = l_x_in, units = 128,
+    #			    activation=tf.nn.relu, kernel_initializer=glorot_uniform_initializer(), name = 'l_x_2')
+    #W = tf.placeholder(tf.float32, shape = [vocabulary_size, 128], kernel_initializer=glorot_uniform_initializer())
+    #l_x_2 = tf.nn.relu(tf.mul(tf.transpose(W), l_x_2))
+
     # Variables.
     with tf.device('/cpu:0'):
 	embeddings = tf.Variable(features_matrix, dtype=tf.float32, trainable = True)
@@ -286,16 +284,16 @@ with graph.as_default(), tf.device('/gpu:0'):
 
 
 #     clf_lr = 0.25
-    clf_idx = tf.placeholder(tf.int32, shape=[None])
+    clf_input = tf.placeholder(tf.float32, shape=[None, input_dim])
     clf_y = tf.placeholder(tf.float32, shape=[None, trn_y.shape[1]])
 
-    embed_x = tf.nn.embedding_lookup(embeddings, clf_idx)
+    #embed_x = tf.nn.embedding_lookup(embeddings, clf_input)
 
 # #   for datasets in the deepwalk, multi-class
-    w = tf.Variable(tf.truncated_normal([128, 39]))
+    w = tf.Variable(tf.truncated_normal([input_dim, 39]))
     b = tf.Variable(tf.zeros([39]))
     
-    logit_y = tf.matmul(embed_x, w) + b
+    logit_y = tf.matmul(clf_input, w) + b
     predictions = tf.nn.sigmoid(logit_y)
 
 #    logit_y = tf.layers.dense(inputs = embed_x, units = clf_y.shape[1],
@@ -351,9 +349,11 @@ def running_test():
 
 # In[ ]:
 
+trn_labeled_x = adj_matrix[trn_idx, :]
+tst_labeled_x = adj_matrix[tst_idx, :]
 use_feature = False
-emb_steps = 0 #50000001
-clf_steps = 1
+emb_steps = 1 #50000001
+clf_steps = 0 
 def running():
     total_step = 0
     with tf.Session(graph=graph, config=config) as session:
@@ -382,20 +382,20 @@ def running():
             for step in range(clf_steps):
                 if (use_feature):
                     # for datasets in the icml paper
-                    feed_dict = {clf_idx : trn_idx, clf_y : trn_y, feature_dataset : trn_f}
+                    feed_dict = {clf_input : trn_labeled_x, clf_y : trn_y}
                 else:
-                    feed_dict = {clf_idx : trn_idx, clf_y : trn_y}
+                    feed_dict = {clf_input : trn_labeled_x, clf_y : trn_y}
 
 		#print(trn_idx[0])
 		#print(trn_y[0])
 		#sys.exit(0)
 
                 _, l, res_w, res_b = session.run([clf_optimizer, clf_loss, w, b], feed_dict=feed_dict)
-		print('-----save parameters-----')
-		w_filename = '/hdd2/graph_embedding/customized/results/exp_blogcatalog_semi_avg_label10/w_iter%d.txt' %total_step
-		np.savetxt(w_filename, res_w)
-		b_filename = '/hdd2/graph_embedding/customized/results/exp_blogcatalog_semi_avg_label10/b_iter%d.txt' %total_step
-		np.savetxt(b_filename, res_b)
+#		print('-----save parameters-----')
+#		w_filename = '/hdd2/graph_embedding/customized/results/exp_blogcatalog_semi_avg_label10/w_iter%d.txt' %total_step
+#		np.savetxt(w_filename, res_w)
+#		b_filename = '/hdd2/graph_embedding/customized/results/exp_blogcatalog_semi_avg_label10/b_iter%d.txt' %total_step
+#		np.savetxt(b_filename, res_b)
 
 
                 average_clf_loss += l
@@ -417,42 +417,44 @@ def running():
             res_y_pred = tf.round(predictions)
 	    res_y_pred_val = predictions
             res_y_true = tf.round(clf_y)
-	    res_feature = embed_x
+	    res_feature = clf_input
 
             if (use_feature):
-		trn_y_pred = res_y_pred.eval({clf_idx : trn_idx, clf_y: trn_y, feature_dataset : trn_f})
-		trn_y_ture = res_y_true.eval({clf_idx : trn_idx, clf_y: trn_y, feature_dataset : trn_f})
-		tst_y_pred = res_y_pred.eval({clf_idx : tst_idx, clf_y: tst_y, feature_dataset : tst_f})
-		tst_y_ture = res_y_true.eval({clf_idx : tst_idx, clf_y: tst_y, feature_dataset : tst_f})
+		trn_y_pred = res_y_pred.eval({clf_input : trn_labeled_x, clf_y: trn_y, feature_dataset : trn_f})
+		trn_y_ture = res_y_true.eval({clf_input : trn_labeled_x, clf_y: trn_y, feature_dataset : trn_f})
+		#tst_y_pred = res_y_pred.eval({clf_input : tst_idx, clf_y: tst_y, feature_dataset : tst_f})
+		#tst_y_ture = res_y_true.eval({clf_input : tst_idx, clf_y: tst_y, feature_dataset : tst_f})
 		#print("Epoch %d, trn acc %.6f acc %.6f:" % (total_step,
                 #                                            f1_score(trn_y_ture, trn_y_pred.flatten()),
                 #                                            f1_score(tst_y_ture, tst_y_pred.flatten())))
             else:
-		pass
-                trn_y_pred = res_y_pred.eval({clf_idx : trn_idx, clf_y: trn_y})
-                trn_y_true = res_y_true.eval({clf_idx : trn_idx, clf_y: trn_y})
-		trn_y_pred_val = res_y_pred_val.eval({clf_idx : trn_idx, clf_y: trn_y})
-                tst_y_pred = res_y_pred.eval({clf_idx : tst_idx, clf_y: tst_y})
-                tst_y_true = res_y_true.eval({clf_idx : tst_idx, clf_y: tst_y})
-		tst_y_pred_val = res_y_pred_val.eval({clf_idx : tst_idx, clf_y: tst_y})
+#		pass
+                trn_y_pred = res_y_pred.eval({clf_input : trn_labeled_x, clf_y: trn_y})
+                trn_y_true = res_y_true.eval({clf_input : trn_labeled_x, clf_y: trn_y})
+		trn_y_pred_val = res_y_pred_val.eval({clf_input : trn_labeled_x, clf_y: trn_y})
+                tst_y_pred = res_y_pred.eval({clf_input : tst_labeled_x, clf_y: tst_y})
+                tst_y_true = res_y_true.eval({clf_input : tst_labeled_x, clf_y: tst_y})
+		tst_y_pred_val = res_y_pred_val.eval({clf_input : tst_labeled_x, clf_y: tst_y})
 
-		tst_features_val = res_feature.eval({clf_idx : tst_idx, clf_y: tst_y})
+		tst_features_val = res_feature.eval({clf_input : tst_labeled_x, clf_y: tst_y})
 
-		print("Epoch %d, trn: micro-f1 %.6f, tst: micro-f1 %.6f:" % (total_step,
+		print("Epoch %d, trn: micro-f1 %.6f, macro: %.6f, tst: micro-f1 :%.6f, macro: %.6f" % (total_step,
 							    f1_score(trn_y_true, trn_y_pred, average = 'micro'),
-							    f1_score(tst_y_true, tst_y_pred, average='micro' )))
-		print('------trn_y_pred_val---')
-		print(trn_y_pred_val.tolist()[0])
-		print('------trn_y_pred-------')
-                print(trn_y_pred.tolist()[0])
-		print('------trn_y_true-------')
-                print(trn_y_true.tolist()[0])
-		print('------tst_y_pred_val---')
-		print(tst_y_pred_val.tolist()[0])
-		print('------tst_y_pred-------')
-		print(tst_y_pred.tolist()[0])
-		print('------tst_y_true-------')
-		print(tst_y_true.tolist()[0])
+							    f1_score(trn_y_true, trn_y_pred, average = 'macro'),
+							    f1_score(tst_y_true, tst_y_pred, average='micro' ),
+							    f1_score(tst_y_true, tst_y_pred, average = 'macro')))
+#		print('------trn_y_pred_val---')
+#		print(trn_y_pred_val.tolist()[0])
+#		print('------trn_y_pred-------')
+#                print(trn_y_pred.tolist()[0])
+#		print('------trn_y_true-------')
+#                print(trn_y_true.tolist()[0])
+#		print('------tst_y_pred_val---')
+		#print(tst_y_pred_val.tolist()[0])
+		#print('------tst_y_pred-------')
+		#print(tst_y_pred.tolist()[0])
+		#print('------tst_y_true-------')
+		#print(tst_y_true.tolist()[0])
 
 		#sys.exit(0)
 
