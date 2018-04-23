@@ -56,8 +56,6 @@ random.seed(1)
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-dataset_name = 'icml'
-
 def sparse2graph(x):
     G = defaultdict(lambda: set())
     cx = x.tocoo()
@@ -65,10 +63,19 @@ def sparse2graph(x):
 	G[i].add(j)
     return {str(k): [str(x) for x in v] for k,v in iteritems(G)}
 
-if (dataset_name == 'deepwalk'):
-    file_list = ['/hdd2/graph_embedding/customized/blogcatalog.embeddings.walks.0']
-elif (dataset_name == 'icml'):
-    file_list = ['/hdd2/graph_embedding/customized/citeseer.embeddings.walks']
+# # Load Data
+matfile = '/hdd2/graph_embedding/deepwalk/example_graphs/blogcatalog.mat'
+mat = sio.loadmat(matfile)
+A = mat['network']
+g = sparse2graph(A)
+labels_matrix = mat['group']
+labels_count = labels_matrix.shape[1]
+adj_matrix = A.todense()
+input_dim = adj_matrix.shape[0]
+
+
+# file_list = ['/hdd2/graph_embedding/customized/tmp/citeseer.embeddings.walks']
+file_list = ['/hdd2/graph_embedding/customized/blogcatalog.embeddings.walks.0']
 dataset = genfromtxt(file_list[0], delimiter=' ')
 
 def get_num_vacabulary(dataset):
@@ -79,9 +86,14 @@ def get_num_vacabulary(dataset):
 
 vocabulary_size = get_num_vacabulary(dataset) + 1
 
+
+# In[366]:
+
 words = dataset.flatten()
 words = [str(int(w)) for w in words]
 
+
+# In[369]:
 
 def build_dataset(words):
     count = []
@@ -104,46 +116,17 @@ data, count, dictionary, reverse_dictionary = build_dataset(words)
 
 
 ## Read the data, the trn_x is the position in the embedding matrix
-def load_data(dataset_name):
-    global trn_labeled_x
-    global tst_labeled_x
-    global adj_matrix
+data_splited_filename = '/hdd2/graph_embedding/customized/blogcatalog_splited_p10.pickle'
+with open(data_splited_filename, 'rb') as handle:
+    unserialized_data = pickle.load(handle)
+trn_idx, trn_y, tst_idx, tst_y = (unserialized_data['trn_idx'],
+				  unserialized_data['trn_y'],
+				  unserialized_data['tst_idx'],
+				  unserialized_data['tst_y'])
+#trn_idx, trn_y, tst_idx, tst_y, = get_labeled_instant()
 
-    if (dataset_name == 'deepwalk'):
-	matfile = '/hdd2/graph_embedding/deepwalk/example_graphs/blogcatalog.mat'
-	mat = sio.loadmat(matfile)
-	A = mat['network']
-	g = sparse2graph(A)
-	labels_matrix = mat['group']
-	labels_count = labels_matrix.shape[1]
-	adj_matrix = A.todense()
 
-	data_splited_filename = '/hdd2/graph_embedding/customized/blogcatalog_splited_p10.pickle'
-	with open(data_splited_filename, 'rb') as handle:
-	    unserialized_data = pickle.load(handle)
-	    trn_idx, trn_y, tst_idx, tst_y = (unserialized_data['trn_idx'],
-					      unserialized_data['trn_y'],
-					      unserialized_data['tst_idx'],
-					      unserialized_data['tst_y'])
-	    trn_labeled_x = adj_matrix[trn_idx, :]
-	    tst_labeled_x = adj_matrix[tst_idx, :]
-
-    elif (dataset_name == 'icml'):
-	DATASET = 'citeseer'
-	NAMES = ['x', 'y', 'tx', 'ty', 'allx', 'graph']
-	OBJECTS = []
-	for i in range(len(NAMES)):
-	    OBJECTS.append(cPickle.load(open("data/ind.{}.{}".format(DATASET, NAMES[i]))))
-	x, y, tx, ty, allx, graph = tuple(OBJECTS)
-   
-    return x, y, tx, ty, allx, graph
-
-trn_labeled_x, trn_y, tst_labeled_x, tst_y, allx, graph = load_data(dataset_name = 'icml')
-print(trn_labeled_x.shape)
-print(tst_labeled_x.shape)
-print(allx.shape)
-print(len(graph))
-
+# In[399]:
 
 path_index = 0
 batch_path_size = 2
@@ -179,6 +162,8 @@ def generate_batch(batch_path_size, num_skips, skip_window):
             w_p2p)
 
 
+# In[384]:
+
 # Reproduce Gensim weights initialization
 def seeded_vector(seed_string, vector_size):
     """Create one 'random' vector (but deterministic by seed_string)"""
@@ -191,15 +176,15 @@ def read_train_matrix(embeddings_file):
     trained_embeddings = np.loadtxt(embeddings_file)
     return trained_embeddings
 
-def initialize_embedding_matrix():
-    features_list = []
-    for idx in range(vocabulary_size):
-        str_node = reverse_dictionary[idx]
-        features_list.append(seeded_vector(str_node + str(1), 128))
-    features_matrix = np.asarray(features_list)
-    #features_matrix = read_train_matrix('/hdd2/graph_embedding/customized/results/deepwalk_unsupervised/blog_embeddings_iter710000.txt')
-    return features_matrix
+features_list = []
+for idx in range(vocabulary_size):
+    str_node = reverse_dictionary[idx]
+    features_list.append(seeded_vector(str_node + str(1), 128))
+features_matrix = np.asarray(features_list)
+#features_matrix = read_train_matrix('/hdd2/graph_embedding/customized/results/deepwalk_unsupervised/blog_embeddings_iter710000.txt')
 
+
+# In[313]:
 
 def Average_Paths(X, _weight, _bias):
     path_avg_output = tf.reduce_mean(X, axis=1)
@@ -214,14 +199,22 @@ def Average_Paths(X, _weight, _bias):
     return scale_output, path_avg_output[-1], path_avg_output
 
 
+# In[ ]:
+
+
+
+
+# In[418]:
+
 use_feature = False
 use_reweight = False
+labeled_size = trn_idx.shape[0]
 batch_path_size = 2
 batch_size = batch_path_size * 400
-embedding_size = 50 # Dimension of the embedding vector.
+embedding_size = 128 # Dimension of the embedding vector.
 skip_window = 10 # How many words to consider left and right.
 num_skips = 20 # How many times to reuse an input to generate a label.
-num_class = 6
+num_class = 39
 
 # We pick a random validation set to sample nearest neighbors. here we limit the
 # validation samples to the words that have a low numeric ID, which by
@@ -251,7 +244,6 @@ with graph.as_default(), tf.device('/gpu:0'):
     #l_x_2 = tf.nn.relu(tf.mul(tf.transpose(W), l_x_2))
 
     # Variables.
-    #features_matrix = initialize_embedding_matrix()
     #with tf.device('/cpu:0'):
 #	embeddings = tf.Variable(features_matrix, dtype=tf.float32, trainable = True)
     softmax_weights = tf.Variable(
@@ -312,12 +304,8 @@ with graph.as_default(), tf.device('/gpu:0'):
 
 #    logit_y = tf.layers.dense(inputs = embed_x, units = clf_y.shape[1],
 #                              activation=tf.nn.sigmoid, kernel_initializer=glorot_uniform_initializer())
-    if (dataset_name == 'deepwalk'):
-	clf_loss = tf.reduce_mean(
-    	    tf.nn.sigmoid_cross_entropy_with_logits(logits = logit_y, labels = clf_y))
-    else:
-	clf_loss = tf.reduce_mean(
-	    tf.nn.softmax_cross_entropy_with_logits(logits = logit_y, labels = clf_y))
+    clf_loss = tf.reduce_mean(
+        tf.nn.sigmoid_cross_entropy_with_logits(logits = logit_y, labels = clf_y))
 
 # # for 1 class
 #     feature_dataset = tf.placeholder(tf.float32, shape=[None, trn_f.shape[1]])
@@ -367,6 +355,8 @@ def running_test():
 
 # In[ ]:
 
+trn_labeled_x = adj_matrix[trn_idx, :]
+tst_labeled_x = adj_matrix[tst_idx, :]
 use_feature = False
 emb_steps = 1000 #50000001
 clf_steps = 0 
@@ -375,7 +365,6 @@ def running():
     with tf.Session(graph=graph, config=config) as session:
         tf.global_variables_initializer().run()
         print('Initialized')
-
         while (True):
             average_emb_loss = 0
             average_clf_loss = 0
@@ -383,7 +372,7 @@ def running():
                 batch_data, batch_labels, batch_path, batch_path_id, w_p2p = generate_batch(
                     batch_path_size, num_skips, skip_window)
 		
-		batch_trn_label_x = allx[batch_data, :]
+		batch_trn_label_x = adj_matrix[batch_data, :]
                 feed_dict = {train_dataset : batch_trn_label_x,
                              train_labels : batch_labels,
                              path_dataset : batch_path,
