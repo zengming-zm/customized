@@ -112,6 +112,8 @@ trn_idx, trn_y, tst_idx, tst_y = (unserialized_data['trn_idx'],
 				  unserialized_data['trn_y'],
 				  unserialized_data['tst_idx'],
 				  unserialized_data['tst_y'])
+#trn_idx = trn_idx.reshape(trn_idx.shape[0], 1)
+#tst_idx = tst_idx.reshape(tst_idx.shape[0], 1)
 #trn_idx, trn_y, tst_idx, tst_y, = get_labeled_instant()
 
 
@@ -151,8 +153,6 @@ def generate_batch(batch_path_size, num_skips, skip_window):
             w_p2p)
 
 
-# In[384]:
-
 # Reproduce Gensim weights initialization
 def seeded_vector(seed_string, vector_size):
     """Create one 'random' vector (but deterministic by seed_string)"""
@@ -173,8 +173,6 @@ features_matrix = np.asarray(features_list)
 #features_matrix = read_train_matrix('/hdd2/graph_embedding/customized/results/deepwalk_unsupervised/blog_embeddings_iter710000.txt')
 
 
-# In[313]:
-
 def Average_Paths(X, _weight, _bias):
     path_avg_output = tf.reduce_mean(X, axis=1)
 
@@ -187,13 +185,6 @@ def Average_Paths(X, _weight, _bias):
     # Linear activation
     return scale_output, path_avg_output[-1], path_avg_output
 
-
-# In[ ]:
-
-
-
-
-# In[418]:
 
 use_feature = False
 use_reweight = True
@@ -216,6 +207,8 @@ num_sampled = 64 # Number of negative examples to sample.
 config = tf.ConfigProto(allow_soft_placement=True)
 graph = tf.Graph()
 
+lambda1 = 0.1
+
 with graph.as_default(), tf.device('/gpu:0'):
 
     # Input data.
@@ -230,6 +223,31 @@ with graph.as_default(), tf.device('/gpu:0'):
     # Variables.
     with tf.device('/cpu:0'):
 	embeddings = tf.Variable(features_matrix, dtype=tf.float32, trainable = True)
+
+    w = tf.Variable(tf.truncated_normal([128, 39]))
+    b = tf.Variable(tf.zeros([39]))
+
+    # Supervised training, fixed embedding, update supervised w and b
+    clf_idx = tf.placeholder(tf.int32, shape=[None])
+    clf_y = tf.placeholder(tf.float32, shape=[None, trn_y.shape[1]])
+
+    embed_x = tf.nn.embedding_lookup(embeddings, clf_idx)
+    embed_x = tf.stop_gradient(embed_x)
+
+
+   
+    logit_y = tf.matmul(embed_x, w) + b
+    predictions = tf.nn.sigmoid(logit_y)
+
+    clf_loss = tf.reduce_mean(
+        tf.nn.sigmoid_cross_entropy_with_logits(logits = logit_y, labels = clf_y))
+
+    clf_optimizer = tf.train.AdamOptimizer(learning_rate=0.25).minimize(clf_loss)
+
+
+    # Semi-supervised training, fix w, b in the sueprvised branch, 
+    # update embedding and word2vec w and b (softmax_weights, softmax_biases)
+
     softmax_weights = tf.Variable(
 	tf.truncated_normal([vocabulary_size, embedding_size], stddev=1.0 / math.sqrt(embedding_size)))
     softmax_biases = tf.Variable(tf.zeros([vocabulary_size]))
@@ -251,10 +269,18 @@ with graph.as_default(), tf.device('/gpu:0'):
 ##         reweight_each_path = tf.ones(shape=[batch_path_size, 1])
 #        reweight_each_pair = tf.ones(shape=[batch_size, 1])
 
+# #   for datasets in the deepwalk, multi-class
+    embed_supervised_x = tf.nn.embedding_lookup(embeddings, clf_idx)
+    w_supervised = tf.Variable(w, dtype=tf.float32, trainable = False)
+    b_supervised = tf.Variable(b, dtype=tf.float32, trainable = False)
+    logit_y_supervised = tf.matmul(embed_supervised_x, w_supervised) + b_supervised
+
+
     # Compute the softmax loss, using a sample of the negative labels each time.
     loss = tf.reduce_mean(
         tf.nn.sampled_softmax_loss(weights=softmax_weights, biases=softmax_biases, inputs=embed,
-                                   labels=train_labels, num_sampled=num_sampled, num_classes=vocabulary_size))
+	    labels=train_labels, num_sampled=num_sampled, num_classes=vocabulary_size)) + lambda1 * tf.reduce_mean(
+		tf.nn.sigmoid_cross_entropy_with_logits(logits = logit_y_supervised, labels = clf_y))
 
     global_step = tf.Variable(0, trainable=False)
 
@@ -268,25 +294,7 @@ with graph.as_default(), tf.device('/gpu:0'):
 
 
 #     clf_lr = 0.25
-    clf_idx = tf.placeholder(tf.int32, shape=[None])
-    clf_y = tf.placeholder(tf.float32, shape=[None, trn_y.shape[1]])
-
-    embed_x = tf.nn.embedding_lookup(embeddings, clf_idx)
-    clf_x = tf.Variable(embed_x, dtype=tf.float32, trainable = False) 
-
-# #   for datasets in the deepwalk, multi-class
-    w = tf.Variable(tf.truncated_normal([128, 39]))
-    b = tf.Variable(tf.zeros([39]))
-    
-    logit_y = tf.matmul(embed_x, w) + b
-    predictions = tf.nn.sigmoid(logit_y)
-
-#    logit_y = tf.layers.dense(inputs = embed_x, units = clf_y.shape[1],
-#                              activation=tf.nn.sigmoid, kernel_initializer=glorot_uniform_initializer())
-    clf_loss = tf.reduce_mean(
-        tf.nn.sigmoid_cross_entropy_with_logits(logits = logit_y, labels = clf_y))
-
-# # for 1 class
+    # # for 1 class
 #     feature_dataset = tf.placeholder(tf.float32, shape=[None, trn_f.shape[1]])
 #     l_x_hid = tf.layers.dense(inputs = feature_dataset, units = clf_y.shape[1],
 #                               activation = tf.nn.softmax, kernel_initializer = glorot_uniform_initializer())
@@ -304,7 +312,6 @@ with graph.as_default(), tf.device('/gpu:0'):
 #     clf_loss = tf.reduce_mean(
 #         tf.nn.softmax_cross_entropy_with_logits(logits = logit_y, labels = clf_y))
 
-    clf_optimizer = tf.train.AdamOptimizer(learning_rate=0.25).minimize(clf_loss)
 
 
     # Compute the similarity between minibatch examples and all embeddings.
@@ -314,8 +321,6 @@ with graph.as_default(), tf.device('/gpu:0'):
 #     valid_embeddings = tf.nn.embedding_lookup(
 #         normalized_embeddings, valid_dataset)
 #     similarity = tf.matmul(valid_embeddings, tf.transpose(normalized_embeddings))
-
-
 
 def running_test():
     with tf.Session(graph=graph) as session:
@@ -332,11 +337,10 @@ def running_test():
         print('loss: %.4f' %(l))
 
 
-# In[ ]:
 
 use_feature = False
 emb_steps = 10000 #50000001
-clf_steps = 0
+clf_steps = 1000 
 def running():
     total_step = 0
     with tf.Session(graph=graph, config=config) as session:
@@ -350,7 +354,9 @@ def running():
                     batch_path_size, num_skips, skip_window)
                 feed_dict = {train_dataset : batch_data,
                              train_labels : batch_labels,
-                             path_dataset : batch_path}
+                             path_dataset : batch_path,
+			     clf_idx : trn_idx, 
+			     clf_y : trn_y}
                              #path_id : batch_path_id,
                              #w_path2pair : w_p2p}
                 _, l = session.run([optimizer, loss], feed_dict=feed_dict)
@@ -401,6 +407,7 @@ def running():
 	    res_y_pred_val = predictions
             res_y_true = tf.round(clf_y)
 	    res_feature = embed_x
+
 
             if (use_feature):
 		trn_y_pred = res_y_pred.eval({clf_idx : trn_idx, clf_y: trn_y, feature_dataset : trn_f})
