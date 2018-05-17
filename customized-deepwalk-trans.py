@@ -194,7 +194,7 @@ batch_path_size = FLAGS.batch_path_size
 batch_size = batch_path_size * num_pair_per_path 
 embedding_size = FLAGS.embedding_size # Dimension of the embedding vector.
 skip_window = FLAGS.skip_window # How many words to consider left and right.
-#num_skips = 20 # How many times to reuse an input to generate a label.
+num_skips = FLAGS.num_skips # How many times to reuse an input to generate a label.
 num_class = FLAGS.num_class
 
 # We pick a random validation set to sample nearest neighbors. here we limit the
@@ -347,6 +347,7 @@ def running_test():
 use_feature = FLAGS.use_feature
 emb_steps = FLAGS.emb_steps #10000 #50000001
 clf_steps = FLAGS.clf_steps # 1000 
+embedding_path = FLAGS.embedding_path
 def running():
     total_step = 0
     with tf.Session(graph=graph, config=config) as session:
@@ -460,7 +461,7 @@ def running():
 		#sys.exit(0)
 
             if total_step % 1 == 0:
-                embedding_filename = '/hdd2/graph_embedding/customized/results/exp_blogcatalog_semi_avg_label10_3/blog_embeddings_iter%d.txt' %total_step
+                embedding_filename = embedding_path + 'blog_embeddings_iter%d.txt' %total_step
                 not_normal_embeddings = embeddings.eval()
                 ordered_embeddings = [not_normal_embeddings[dictionary[str(node)]] for node in range(len(dictionary))]
                 np.savetxt(embedding_filename, ordered_embeddings)

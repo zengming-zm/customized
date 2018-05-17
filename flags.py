@@ -21,4 +21,4 @@ flags.DEFINE_float("semisupervised_learning_rate", 0.1, "learning rate for semi-
 flags.DEFINE_bool("use_feature", False, "whether use external features")
 flags.DEFINE_integer("emb_steps", 10000, "how many epochs for learning embedding")
 flags.DEFINE_integer("clf_steps", 100, "how many epochs for learning classifier")
-
+flags.DEFINE_string("embedding_path", "/hdd2/graph_embedding/customized/results/exp_blogcatalog_semi_avg_label10_3/", "location for the embedding")
