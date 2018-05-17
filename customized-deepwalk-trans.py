@@ -30,26 +30,26 @@ from collections import defaultdict as dd
 import tensorflow as tf
 from tensorflow.python.ops.init_ops import glorot_uniform_initializer, RandomUniform, RandomNormal
 
-from keras import layers
-from keras.models import Sequential
-from keras.layers import Input, Dense, Activation, BatchNormalization, Flatten
-from keras.layers.embeddings import Embedding
-from keras.models import Model
-from keras.utils import layer_utils
-from keras.utils.data_utils import get_file
-from keras.applications.imagenet_utils import preprocess_input
-from keras.preprocessing.text import one_hot
-from keras.preprocessing.sequence import pad_sequences
-
 from gensim.models import Word2Vec
 from gensim.models.word2vec import Vocab
 
+import flags
 #import word2vec
+
+flags = tf.flags
+FLAGS = flags.FLAGS
+
 
 np.random.seed(1)
 random.seed(1)
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = FLAGS.gpu_id 
+num_pair_per_path = FLAGS.num_pair_per_path
+
+def set_hparams_from_args(args):
+    if not args:
+	return
+
 
 def sparse2graph(x):
     G = defaultdict(lambda: set())
@@ -120,11 +120,12 @@ trn_idx, trn_y, tst_idx, tst_y = (unserialized_data['trn_idx'],
 # In[399]:
 
 path_index = 0
-batch_path_size = 2
-batch_size = batch_path_size * 400
+batch_path_size = FLAGS.batch_path_size
+
+batch_size = batch_path_size * num_pair_per_path
 def generate_batch(batch_path_size, num_skips, skip_window):
     global path_index
-    batch_size = batch_path_size * 400
+    batch_size = batch_path_size * num_pair_per_path
     batch = []
     labels = []
     path_list = []
@@ -143,7 +144,7 @@ def generate_batch(batch_path_size, num_skips, skip_window):
                 labels.append(dictionary[str(int(dataset[path_index][m]))])
                 path_index_list.append(i)
 
-        w_p2p[i * 400 : (i+1) * 400, i] = 1
+        w_p2p[i * num_pair_per_path : (i+1) * num_pair_per_path, i] = 1
 
         path_index = (path_index + 1) % len(dataset)
     return (np.asarray(batch, dtype = np.int32),
@@ -168,7 +169,7 @@ def read_train_matrix(embeddings_file):
 features_list = []
 for idx in range(vocabulary_size):
     str_node = reverse_dictionary[idx]
-    features_list.append(seeded_vector(str_node + str(1), 128))
+    features_list.append(seeded_vector(str_node + str(1), FLAGS.embedding_size))
 features_matrix = np.asarray(features_list)
 #features_matrix = read_train_matrix('/hdd2/graph_embedding/customized/results/deepwalk_unsupervised/blog_embeddings_iter710000.txt')
 
@@ -189,12 +190,12 @@ def Average_Paths(X, _weight, _bias):
 use_feature = False
 use_reweight = True
 labeled_size = trn_idx.shape[0]
-batch_path_size = 2
-batch_size = batch_path_size * 400
-embedding_size = 128 # Dimension of the embedding vector.
-skip_window = 10 # How many words to consider left and right.
-num_skips = 20 # How many times to reuse an input to generate a label.
-num_class = 39
+batch_path_size = FLAGS.batch_path_size
+batch_size = batch_path_size * num_pair_per_path 
+embedding_size = FLAGS.embedding_size # Dimension of the embedding vector.
+skip_window = FLAGS.skip_window # How many words to consider left and right.
+#num_skips = 20 # How many times to reuse an input to generate a label.
+num_class = FLAGS.num_class
 
 # We pick a random validation set to sample nearest neighbors. here we limit the
 # validation samples to the words that have a low numeric ID, which by
@@ -207,7 +208,7 @@ num_sampled = 64 # Number of negative examples to sample.
 config = tf.ConfigProto(allow_soft_placement=True)
 graph = tf.Graph()
 
-lambda1 = 0.1
+lambda1 = FLAGS.lambda_supervised
 
 with graph.as_default(), tf.device('/gpu:0'):
 
@@ -224,8 +225,8 @@ with graph.as_default(), tf.device('/gpu:0'):
     with tf.device('/cpu:0'):
 	embeddings = tf.Variable(features_matrix, dtype=tf.float32, trainable = True)
 
-    w = tf.Variable(tf.truncated_normal([128, 39]))
-    b = tf.Variable(tf.zeros([39]))
+    w = tf.Variable(tf.truncated_normal([embedding_size, num_class]))
+    b = tf.Variable(tf.zeros([num_class]))
 
     # Supervised training, fixed embedding, update supervised w and b
     clf_idx = tf.placeholder(tf.int32, shape=[None])
@@ -238,11 +239,16 @@ with graph.as_default(), tf.device('/gpu:0'):
    
     logit_y = tf.matmul(embed_x, w) + b
     predictions = tf.nn.sigmoid(logit_y)
+    
+    #tf.summary.histogram("predictions", predictions)
 
     clf_loss = tf.reduce_mean(
         tf.nn.sigmoid_cross_entropy_with_logits(logits = logit_y, labels = clf_y))
 
-    clf_optimizer = tf.train.AdamOptimizer(learning_rate=0.25).minimize(clf_loss)
+    clf_optimizer = tf.train.AdamOptimizer(learning_rate=FLAGS.supervised_learning_rate).minimize(clf_loss)
+
+    #tf.summary.histogram("clf_loss", clf_loss)
+
 
 
     # Semi-supervised training, fix w, b in the sueprvised branch, 
@@ -275,12 +281,12 @@ with graph.as_default(), tf.device('/gpu:0'):
     b_supervised = tf.Variable(b, dtype=tf.float32, trainable = False)
     logit_y_supervised = tf.matmul(embed_supervised_x, w_supervised) + b_supervised
 
-
     # Compute the softmax loss, using a sample of the negative labels each time.
     loss = tf.reduce_mean(
         tf.nn.sampled_softmax_loss(weights=softmax_weights, biases=softmax_biases, inputs=embed,
 	    labels=train_labels, num_sampled=num_sampled, num_classes=vocabulary_size)) + lambda1 * tf.reduce_mean(
 		tf.nn.sigmoid_cross_entropy_with_logits(logits = logit_y_supervised, labels = clf_y))
+    #tf.summary.histogram("loss", loss)
 
     global_step = tf.Variable(0, trainable=False)
 
@@ -290,7 +296,7 @@ with graph.as_default(), tf.device('/gpu:0'):
     # optimizer's `minimize` method will by default modify all variable quantities
     # that contribute to the tensor it is passed.
     # See docs on `tf.train.Optimizer.minimize()` for more details.
-    optimizer = tf.train.AdagradOptimizer(learning_rate=0.25).minimize(loss, global_step=global_step)
+    optimizer = tf.train.AdagradOptimizer(learning_rate=FLAGS.semisupervised_learning_rate).minimize(loss, global_step=global_step)
 
 
 #     clf_lr = 0.25
@@ -338,18 +344,22 @@ def running_test():
 
 
 
-use_feature = False
-emb_steps = 10000 #50000001
-clf_steps = 1000 
+use_feature = FLAGS.use_feature
+emb_steps = FLAGS.emb_steps #10000 #50000001
+clf_steps = FLAGS.clf_steps # 1000 
 def running():
     total_step = 0
     with tf.Session(graph=graph, config=config) as session:
+	#train_writer = tf.summary.FileWriter( './log/train ', session.graph)
         tf.global_variables_initializer().run()
         print('Initialized')
+
         while (True):
             average_emb_loss = 0
             average_clf_loss = 0
             for step in range(emb_steps):
+		#merge = tf.summary.merge_all()
+
                 batch_data, batch_labels, batch_path, batch_path_id, w_p2p = generate_batch(
                     batch_path_size, num_skips, skip_window)
                 feed_dict = {train_dataset : batch_data,
@@ -360,6 +370,7 @@ def running():
                              #path_id : batch_path_id,
                              #w_path2pair : w_p2p}
                 _, l = session.run([optimizer, loss], feed_dict=feed_dict)
+		#train_writer.add_summary(summary, total_step)
                 average_emb_loss += l
                 if step % 2000 == 0:
                     if step > 0:
@@ -449,7 +460,7 @@ def running():
 		#sys.exit(0)
 
             if total_step % 1 == 0:
-                embedding_filename = '/hdd2/graph_embedding/customized/results/exp_blogcatalog_semi_avg_label10_1/blog_embeddings_iter%d.txt' %total_step
+                embedding_filename = '/hdd2/graph_embedding/customized/results/exp_blogcatalog_semi_avg_label10_3/blog_embeddings_iter%d.txt' %total_step
                 not_normal_embeddings = embeddings.eval()
                 ordered_embeddings = [not_normal_embeddings[dictionary[str(node)]] for node in range(len(dictionary))]
                 np.savetxt(embedding_filename, ordered_embeddings)
