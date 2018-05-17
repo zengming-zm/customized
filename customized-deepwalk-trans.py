@@ -45,6 +45,7 @@ random.seed(1)
 
 os.environ["CUDA_VISIBLE_DEVICES"] = FLAGS.gpu_id 
 num_pair_per_path = FLAGS.num_pair_per_path
+gpu_id = '/gpu:%d' %FLAGS.gpu_id
 
 def set_hparams_from_args(args):
     if not args:
@@ -59,7 +60,8 @@ def sparse2graph(x):
     return {str(k): [str(x) for x in v] for k,v in iteritems(G)}
 
 # # Load Data
-matfile = '/hdd2/graph_embedding/deepwalk/example_graphs/blogcatalog.mat'
+#matfile = '/hdd2/graph_embedding/deepwalk/example_graphs/blogcatalog.mat'
+matfile = FLAGS.source_file
 mat = sio.loadmat(matfile)
 A = mat['network']
 g = sparse2graph(A)
@@ -68,7 +70,8 @@ labels_count = labels_matrix.shape[1]
 
 
 # file_list = ['/hdd2/graph_embedding/customized/tmp/citeseer.embeddings.walks']
-file_list = ['/hdd2/graph_embedding/customized/blogcatalog.embeddings.walks.0']
+#file_list = ['/hdd2/graph_embedding/customized/blogcatalog.embeddings.walks.0']
+file_list = [FLAGS.rand_walk_paths]
 dataset = genfromtxt(file_list[0], delimiter=' ')
 
 def get_num_vacabulary(dataset):
@@ -210,7 +213,7 @@ graph = tf.Graph()
 
 lambda1 = FLAGS.lambda_supervised
 
-with graph.as_default(), tf.device('/gpu:0'):
+with graph.as_default(), tf.device(gpu_id):
 
     # Input data.
     train_dataset = tf.placeholder(tf.int32, shape=[batch_size])
