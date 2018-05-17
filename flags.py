@@ -22,5 +22,5 @@ flags.DEFINE_bool("use_feature", False, "whether use external features")
 flags.DEFINE_integer("emb_steps", 10000, "how many epochs for learning embedding")
 flags.DEFINE_integer("clf_steps", 100, "how many epochs for learning classifier")
 flags.DEFINE_string("embedding_path", "/hdd2/graph_embedding/customized/results/exp_blogcatalog_semi_avg_label10_3/", "location for the embedding")
-flags.DEFINE_string("rand_walk_paths", "/hdd2/graph_embedding/customized/blogcatalog.embeddings.walks.0", "set of paths generated from random walks"
+flags.DEFINE_string("rand_walk_paths", "/hdd2/graph_embedding/customized/blogcatalog.embeddings.walks.0", "set of paths generated from random walks")
 flags.DEFINE_string("source_file", "/hdd2/graph_embedding/deepwalk/example_graphs/blogcatalog.mat", "path of dataset source file")

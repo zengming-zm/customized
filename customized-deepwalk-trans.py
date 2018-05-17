@@ -45,7 +45,7 @@ random.seed(1)
 
 os.environ["CUDA_VISIBLE_DEVICES"] = FLAGS.gpu_id 
 num_pair_per_path = FLAGS.num_pair_per_path
-gpu_id = '/gpu:%d' %FLAGS.gpu_id
+gpu_id = '/gpu:%s' %FLAGS.gpu_id
 
 def set_hparams_from_args(args):
     if not args:
